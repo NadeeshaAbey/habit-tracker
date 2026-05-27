@@ -35,6 +35,11 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
       UNIQUE(habit_id, date)
     );
 
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_habits_active    ON habits(archived_at);
     CREATE INDEX IF NOT EXISTS idx_logs_habit_date  ON habit_logs(habit_id, date DESC);
   `);
