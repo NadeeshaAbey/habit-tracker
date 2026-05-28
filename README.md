@@ -1,56 +1,113 @@
-# Welcome to your Expo app 👋
+# Habit Tracker
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A minimal, thoughtful habit tracker for iOS and Android built with Expo and React Native. Track daily habits, visualise streaks, and build consistency — no streak shaming, just a clearer picture of who you're becoming.
 
-## Get started
+## Features
 
-1. Install dependencies
+- **Today view** — progress ring, 7-day week strip, habits grouped by time of day
+- **Calendar** — month heat-grid with day intensity, per-habit 12-week mini heatmaps
+- **Insights** — 14-day bar chart, category & day-of-week breakdowns, per-habit stats
+- **Habit templates** — 12 ready-made habits across 5 categories to get started fast
+- **Streak freezes** — save a streak when life gets in the way; earn 1 freeze every 7-day streak
+- **Per-habit reminders** — native push notifications with a built-in time picker
+- **Daily nudge** — single global reminder with a configurable time
+- **Theming** — light / dark / system modes, 5 accent colours, 3 card styles (Soft / Outline / Lift)
+- **Onboarding** — 3-step flow to pick starter habits and set a reminder
+- **100% offline** — all data stored locally with SQLite, no account required
 
-   ```bash
-   npm install
-   ```
+## Screenshots
 
-2. Start the app
+Drop your screen recordings or screenshots into the [`screenshots/`](./screenshots/) folder and they will appear here.
 
-   ```bash
-   npx expo start
-   ```
+| Today | Calendar | Insights |
+|---|---|---|
+| ![Today](screenshots/today.png) | ![Calendar](screenshots/calendar.png) | ![Insights](screenshots/insights.png) |
 
-In the output, you'll find options to open the app in a
+| Habit Detail | New Habit | Settings |
+|---|---|---|
+| ![Habit Detail](screenshots/habit-detail.png) | ![New Habit](screenshots/new-habit.png) | ![Settings](screenshots/settings.png) |
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Tech Stack
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+| Area | Library |
+|---|---|
+| Framework | [Expo](https://expo.dev) SDK 52 |
+| Navigation | [Expo Router](https://expo.github.io/router) v4 (file-based) |
+| Database | [expo-sqlite](https://docs.expo.dev/versions/latest/sdk/sqlite/) |
+| Charts | [react-native-svg](https://github.com/software-mansion/react-native-svg) |
+| Notifications | [expo-notifications](https://docs.expo.dev/versions/latest/sdk/notifications/) |
+| Time picker | [@react-native-community/datetimepicker](https://github.com/react-native-community/datetimepicker) |
+| Haptics | [expo-haptics](https://docs.expo.dev/versions/latest/sdk/haptics/) |
+| Date utils | [date-fns](https://date-fns.org) |
 
-## Get a fresh project
+## Getting Started
 
-When you're ready, run:
+### Prerequisites
+
+- [Node.js](https://nodejs.org) 18+
+- [Expo CLI](https://docs.expo.dev/more/expo-cli/) — `npm install -g expo-cli`
+- iOS Simulator (macOS) or Android Emulator, or the [Expo Go](https://expo.dev/go) app on a physical device
+
+### Installation
 
 ```bash
-npm run reset-project
+# Clone the repository
+git clone https://github.com/NadeeshaAbey/habit-tracker.git
+cd habit-tracker
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Then press `i` for iOS simulator, `a` for Android emulator, or scan the QR code with Expo Go.
 
-### Other setup steps
+## Project Structure
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```
+habit-tracker/
+├── app/
+│   ├── (tabs)/               # Bottom tab screens
+│   │   ├── _layout.tsx       # Custom tab bar
+│   │   ├── index.tsx         # Today
+│   │   ├── calendar.tsx      # Calendar & heatmaps
+│   │   ├── insights.tsx      # Stats & charts
+│   │   └── settings.tsx      # Preferences
+│   ├── habits/
+│   │   ├── [id].tsx          # Habit detail
+│   │   └── new.tsx           # Create / edit habit
+│   ├── onboarding.tsx        # First-launch onboarding
+│   └── _layout.tsx           # Root stack + ThemeProvider
+└── src/
+    ├── components/
+    │   └── ui.tsx            # Shared UI components
+    ├── context/
+    │   └── ThemeContext.tsx   # Theme state & persistence
+    ├── db/
+    │   ├── client.ts         # SQLite initialisation & migrations
+    │   └── repositories/     # habits, categories, settings
+    ├── theme/
+    │   └── design.ts         # Palette, accent options, buildTheme()
+    ├── types/
+    │   └── index.ts          # Habit, HabitLog, Category, Period
+    └── utils/
+        ├── streak.ts         # Streak & completion rate helpers
+        └── notifications.ts  # Push notification helpers
+```
 
-## Learn more
+## Database Schema
 
-To learn more about developing your project with Expo, look at the following resources:
+The app uses a local SQLite database (`habits.db`) with four tables:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- **`habits`** — name, category, glyph symbol, target per day, period, reminders (JSON), streak freezes
+- **`habit_logs`** — one row per habit per day; supports `frozen` flag for freeze days
+- **`categories`** — 5 seeded categories (Health, Mind, Learning, Work, Creative) with colours
+- **`settings`** — key/value store for accent, card style, theme mode, and reminder preferences
 
-## Join the community
+New columns are added via `ALTER TABLE` migrations wrapped in try/catch, so the database upgrades safely on first launch after an update.
 
-Join our community of developers creating universal apps.
+## License
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+MIT
