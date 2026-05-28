@@ -1,275 +1,491 @@
 import { useCallback, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable,
-  useColorScheme, ActivityIndicator, Dimensions,
-  Alert, TextInput,
+  View, Text, ScrollView, Pressable, Alert, ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { useLocalSearchParams, useFocusEffect, router, Stack } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { BarChart } from 'react-native-gifted-charts';
-import { format, subDays } from 'date-fns';
+import { format, subDays, addDays } from 'date-fns';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { palette, type Theme } from '@/theme/colors';
-import { getHabitById, getLogsForHabit, updateHabit, deleteHabit } from '@/db/repositories/habits';
+import { useTheme } from '@/context/ThemeContext';
+import {
+  cardStyle, GlyphTile, HabitHeatmap, BarChart, PeriodIcon, IconBtn, MONO,
+  TimePickerModal,
+} from '@/components/ui';
+import {
+  getHabitById, getLogsForHabit, setLogCount,
+  updateHabitReminders, freezeLog, deleteHabit,
+} from '@/db/repositories/habits';
 import { listCategories } from '@/db/repositories/categories';
-import { computeStreak, computeBestStreak } from '@/utils/streak';
+import { buildLogMap, computeHabitStreak, computeHabitBest, completionRate } from '@/utils/streak';
+import { PERIODS } from '@/theme/design';
 import type { Habit, HabitLog, Category } from '@/types';
 
-const DAYS = 30;
-const SCREEN_WIDTH = Dimensions.get('window').width;
-
-export default function HabitDetail() {
+export default function HabitDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const scheme = useColorScheme();
-  const t = scheme === 'dark' ? palette.dark : palette.light;
-  const s = styles(t);
+  const { t } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [habit, setHabit] = useState<Habit | null>(null);
-  const [logs, setLogs] = useState<HabitLog[]>([]);
+  const [logs, setLogs] = useState<Map<string, HabitLog>>(new Map());
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [editingReminderIdx, setEditingReminderIdx] = useState<number>(-1);
 
-  const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editCategoryId, setEditCategoryId] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
+  const today = new Date();
+  const todayKey = format(today, 'yyyy-MM-dd');
 
-  useFocusEffect(
-    useCallback(() => {
-      const since = format(subDays(new Date(), DAYS - 1), 'yyyy-MM-dd');
-      Promise.all([
-        getHabitById(Number(id)),
-        getLogsForHabit(Number(id), since),
-        listCategories(),
-      ]).then(([h, l, cats]) => {
-        setHabit(h);
-        setLogs(l);
-        setCategories(cats);
-        setEditName(h?.name ?? '');
-        setEditCategoryId(h?.categoryId ?? null);
-        setLoading(false);
-      });
-    }, [id])
-  );
+  const load = useCallback(async () => {
+    const since = format(subDays(today, 119), 'yyyy-MM-dd');
+    const [h, rawLogs, cats] = await Promise.all([
+      getHabitById(Number(id)),
+      getLogsForHabit(Number(id), since),
+      listCategories(),
+    ]);
+    setHabit(h);
+    setLogs(buildLogMap(rawLogs));
+    setCategories(cats);
+    setLoading(false);
+  }, [id]);
 
-  const onSave = async () => {
-    const trimmed = editName.trim();
-    if (!trimmed) {
-      Alert.alert('Name required', 'Habit name cannot be empty.');
-      return;
-    }
-    setSaving(true);
-    await updateHabit(Number(id), trimmed, editCategoryId);
-    setHabit(prev => prev ? { ...prev, name: trimmed, categoryId: editCategoryId } : prev);
-    setSaving(false);
-    setEditing(false);
-  };
-
-  const onCancel = () => {
-    setEditName(habit?.name ?? '');
-    setEditCategoryId(habit?.categoryId ?? null);
-    setEditing(false);
-  };
-
-  const onArchive = () => {
-    Alert.alert(
-      'Archive habit?',
-      'It will be hidden from your dashboard. Your log history is preserved.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Archive',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteHabit(Number(id));
-            router.back();
-          },
-        },
-      ]
-    );
-  };
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   if (loading) {
     return (
-      <View style={[s.center, { backgroundColor: t.bg }]}>
-        <ActivityIndicator color={t.primary} />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: t.bg }}>
+        <ActivityIndicator color={t.accent} />
       </View>
     );
   }
-
   if (!habit) {
     return (
-      <View style={[s.center, { backgroundColor: t.bg }]}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: t.bg }}>
         <Text style={{ color: t.muted }}>Habit not found.</Text>
       </View>
     );
   }
 
-  const doneSet = new Set(logs.map(l => l.date));
-  const streak = computeStreak([...doneSet]);
-  const bestStreak = computeBestStreak([...doneSet]);
-  const completionRate = Math.round((doneSet.size / DAYS) * 100);
+  const cat = categories.find(c => c.id === habit.categoryId);
+  const tint = cat?.color ?? t.accent;
 
-  const chartWidth = SCREEN_WIDTH - 48;
-  const barWidth = Math.max(4, Math.floor((chartWidth - 40) / DAYS) - 1);
+  const streak = computeHabitStreak(habit, logs, today);
+  const best = computeHabitBest(habit, logs, 120, today);
+  const rate30 = completionRate(habit, logs, 30, today);
+  const rate90 = completionRate(habit, logs, 90, today);
+  const totalDone = [...logs.values()].filter(l => l.count >= habit.targetPerDay).length;
 
-  const barData = Array.from({ length: DAYS }, (_, i) => {
-    const d = format(subDays(new Date(), DAYS - 1 - i), 'yyyy-MM-dd');
+  const todayLog = logs.get(`${habit.id}|${todayKey}`);
+  const todayCount = todayLog?.count ?? 0;
+  const todayDone = todayCount >= habit.targetPerDay;
+
+  const onToggleToday = async () => {
+    const next = todayDone ? 0 : 1;
+    await setLogCount(habit.id, todayKey, next);
+    setLogs(prev => {
+      const m = new Map(prev);
+      const key = `${habit.id}|${todayKey}`;
+      if (next === 0) m.delete(key);
+      else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: 1, frozen: false, createdAt: Date.now() });
+      return m;
+    });
+  };
+
+  const onIncrementToday = async (delta: number) => {
+    const key = `${habit.id}|${todayKey}`;
+    const cur = todayCount;
+    const next = Math.max(0, Math.min(cur + delta, habit.targetPerDay * 2));
+    await setLogCount(habit.id, todayKey, next);
+    setLogs(prev => {
+      const m = new Map(prev);
+      if (next === 0) m.delete(key);
+      else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: next, frozen: false, createdAt: Date.now() });
+      return m;
+    });
+  };
+
+  const onUseFreeze = async () => {
+    if (habit.freezesLeft === 0) return;
+    const yesterday = format(subDays(today, 1), 'yyyy-MM-dd');
+    await freezeLog(habit.id, yesterday);
+    setHabit(prev => prev ? { ...prev, freezesLeft: prev.freezesLeft - 1 } : prev);
+    const key = `${habit.id}|${yesterday}`;
+    setLogs(prev => {
+      const m = new Map(prev);
+      m.set(key, { id: 0, habitId: habit.id, date: yesterday, count: 0, frozen: true, createdAt: Date.now() });
+      return m;
+    });
+  };
+
+  const onAddReminder = () => {
+    setEditingReminderIdx(-1);
+    setShowTimePicker(true);
+  };
+
+  const onReminderConfirm = async (time: string) => {
+    if (!habit) return;
+    setShowTimePicker(false);
+    const newReminders =
+      editingReminderIdx === -1
+        ? [...habit.reminders, time]
+        : habit.reminders.map((r, i) => (i === editingReminderIdx ? time : r));
+    await updateHabitReminders(habit.id, newReminders);
+    setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+  };
+
+  const onRemoveReminder = async (i: number) => {
+    const newReminders = habit.reminders.filter((_, j) => j !== i);
+    await updateHabitReminders(habit.id, newReminders);
+    setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+  };
+
+  const onArchive = () => {
+    Alert.alert(
+      'Archive habit?',
+      'It will be hidden from your dashboard. Log history is preserved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Archive', style: 'destructive', onPress: async () => {
+          await deleteHabit(habit.id);
+          router.back();
+        }},
+      ]
+    );
+  };
+
+  // Build heatmap cells
+  const COLS = 13, ROWS = 7;
+  const gridBase = subDays(today, 83);
+  const gridStart = subDays(gridBase, gridBase.getDay());
+  const heatCells = Array.from({ length: COLS * ROWS }, (_, i) => {
+    const d = addDays(gridStart, i);
+    if (d > today) return 'transparent';
+    const k = format(d, 'yyyy-MM-dd');
+    const log = logs.get(`${habit.id}|${k}`);
+    if (log?.frozen) return '#6e6fd966';
+    if (log && log.count >= habit.targetPerDay) return tint;
+    if (log && log.count > 0) return `${tint}55`;
+    return t.surfaceMute;
+  });
+
+  // 30-day bar data
+  const barData30 = Array.from({ length: 30 }, (_, i) => {
+    const d = format(subDays(today, 29 - i), 'yyyy-MM-dd');
+    const log = logs.get(`${habit.id}|${d}`);
+    const v = log ? (log.frozen ? 0.4 : Math.min(log.count / habit.targetPerDay, 1)) : 0;
     return {
-      value: doneSet.has(d) ? 1 : 0,
-      frontColor: doneSet.has(d) ? t.success : t.border,
-      label: i % 7 === 0 ? format(subDays(new Date(), DAYS - 1 - i), 'M/d') : '',
+      value: v,
+      color: log?.frozen ? '#6e6fd9aa' : v >= 1 ? tint : v > 0 ? `${tint}77` : t.surfaceMute,
+      outlined: i === 29,
     };
   });
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title: editing ? 'Edit Habit' : habit.name,
-          headerRight: () =>
-            !editing ? (
-              <Pressable onPress={() => setEditing(true)} hitSlop={12}>
-                <Ionicons name="pencil-outline" size={22} color={t.primary} />
-              </Pressable>
-            ) : (
-              <Pressable onPress={onSave} disabled={saving} hitSlop={12}>
-                <Text style={[s.headerBtn, saving && { opacity: 0.5 }]}>Save</Text>
-              </Pressable>
-            ),
-          headerLeft: editing
-            ? () => (
-                <Pressable onPress={onCancel} hitSlop={12}>
-                  <Text style={[s.headerBtn, { color: t.muted }]}>Cancel</Text>
-                </Pressable>
-              )
-            : undefined,
-        }}
-      />
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      {/* Top bar */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+        <IconBtn t={t} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={24} color={t.text} />
+        </IconBtn>
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          <IconBtn t={t} onPress={() => router.push(`/habits/new?editId=${habit.id}` as any)}>
+            <Ionicons name="pencil-outline" size={18} color={t.text} />
+          </IconBtn>
+        </View>
+      </View>
 
-      {editing ? (
-        <ScrollView
-          style={{ flex: 1, backgroundColor: t.bg }}
-          contentContainerStyle={s.editContainer}
-          keyboardShouldPersistTaps="handled">
-          <Text style={s.label}>Habit name</Text>
-          <TextInput
-            style={s.input}
-            value={editName}
-            onChangeText={setEditName}
-            placeholderTextColor={t.muted}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={onSave}
-          />
-
-          {categories.length > 0 && (
-            <>
-              <Text style={[s.label, { marginTop: 24 }]}>Category</Text>
-              <View style={s.chips}>
-                {categories.map(cat => {
-                  const selected = cat.id === editCategoryId;
-                  return (
-                    <Pressable
-                      key={cat.id}
-                      onPress={() => setEditCategoryId(selected ? null : cat.id)}
-                      style={[s.chip, { borderColor: cat.color }, selected && { backgroundColor: cat.color }]}>
-                      <Text style={[s.chipText, selected && { color: '#fff' }]}>{cat.name}</Text>
-                    </Pressable>
-                  );
-                })}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 60 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Hero */}
+        <View style={{ paddingHorizontal: 22, paddingTop: 8, paddingBottom: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 18 }}>
+            <GlyphTile t={t} glyph={habit.glyph} color={tint} size={48} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ color: t.text, fontSize: 28, fontWeight: '600', letterSpacing: -0.6 }}>
+                {habit.name}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                {cat && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: tint }}/>
+                    <Text style={{ color: t.muted, fontSize: 12 }}>{cat.name}</Text>
+                  </View>
+                )}
+                <Text style={{ color: t.subtle }}>·</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <PeriodIcon id={habit.period} color={t.muted} size={12} />
+                  <Text style={{ color: t.muted, fontSize: 12 }}>
+                    {PERIODS.find(p => p.id === habit.period)?.name}
+                  </Text>
+                </View>
+                {habit.targetPerDay > 1 && (
+                  <>
+                    <Text style={{ color: t.subtle }}>·</Text>
+                    <Text style={{ ...MONO, color: t.muted, fontSize: 12 }}>
+                      {habit.targetPerDay}×/day
+                    </Text>
+                  </>
+                )}
               </View>
-            </>
-          )}
-        </ScrollView>
-      ) : (
-        <ScrollView style={{ backgroundColor: t.bg }} contentContainerStyle={s.container}>
-          <Text style={s.habitName}>{habit.name}</Text>
-
-          <View style={s.statsRow}>
-            <StatCard label="Streak" value={`${streak} 🔥`} t={t} />
-            <StatCard label="Best" value={`${bestStreak}d`} t={t} />
-            <StatCard label="30-day" value={`${completionRate}%`} t={t} />
+            </View>
           </View>
 
-          <Text style={s.sectionLabel}>Last 30 days</Text>
-          <View style={s.chartCard}>
-            <BarChart
-              data={barData}
-              width={chartWidth - 32}
-              height={120}
-              barWidth={barWidth}
-              spacing={1}
-              hideRules
-              hideYAxisText
-              xAxisColor={t.border}
-              yAxisColor={t.border}
-              xAxisLabelTextStyle={{ color: t.muted, fontSize: 10 }}
-              noOfSections={1}
-              maxValue={1}
-              isAnimated
-            />
+          {/* Streak hero */}
+          <View style={cardStyle(t, {
+            padding: 20, flexDirection: 'row', gap: 18, alignItems: 'center',
+            backgroundColor: streak > 0 ? `${tint}11` : undefined,
+            borderWidth: streak > 0 ? 1 : 0,
+            borderColor: streak > 0 ? `${tint}33` : 'transparent',
+          })}>
+            <View style={{
+              width: 76, height: 76, borderRadius: 38,
+              backgroundColor: `${tint}22`,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Ionicons name="flame" size={22} color={tint} />
+              <Text style={{ ...MONO, color: tint, fontSize: 24, fontWeight: '700', letterSpacing: -0.5 }}>
+                {streak}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' }}>
+                Current streak
+              </Text>
+              <Text style={{ color: t.text, fontSize: 18, fontWeight: '600', marginTop: 4, letterSpacing: -0.3 }}>
+                {streak} day{streak === 1 ? '' : 's'} in a row
+              </Text>
+              <Text style={{ ...MONO, color: t.muted, fontSize: 11, marginTop: 6 }}>
+                BEST · {best}D  ·  FREEZES · {habit.freezesLeft}
+              </Text>
+            </View>
           </View>
 
-          <Pressable onPress={onArchive} style={s.archiveBtn}>
-            <Ionicons name="archive-outline" size={18} color="#EF4444" />
-            <Text style={s.archiveBtnText}>Archive Habit</Text>
+          {/* Today action */}
+          <View style={{ marginTop: 12 }}>
+            {habit.targetPerDay > 1 ? (
+              <View style={cardStyle(t, { padding: 16 })}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+                  <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' }}>
+                    Today
+                  </Text>
+                  <Text style={{ ...MONO, color: t.text, fontSize: 13, fontWeight: '600' }}>
+                    {todayCount} / {habit.targetPerDay}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 4, marginBottom: 12 }}>
+                  {Array.from({ length: habit.targetPerDay }, (_, i) => (
+                    <View key={i} style={{
+                      flex: 1, height: 10, borderRadius: 5,
+                      backgroundColor: i < todayCount ? tint : t.surfaceMute,
+                    }}/>
+                  ))}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    onPress={() => onIncrementToday(-1)}
+                    disabled={todayCount === 0}
+                    style={[styles.actionBtn, {
+                      flex: 1, backgroundColor: t.surfaceMute,
+                      opacity: todayCount === 0 ? 0.4 : 1,
+                    }]}
+                  >
+                    <Ionicons name="remove" size={14} color={t.text} />
+                    <Text style={{ color: t.text, fontSize: 14, fontWeight: '500' }}>Remove</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => onIncrementToday(1)}
+                    style={[styles.actionBtn, {
+                      flex: 2, backgroundColor: todayDone ? t.surfaceMute : tint,
+                    }]}
+                  >
+                    <Ionicons name={todayDone ? 'checkmark' : 'add'} size={15} color={todayDone ? t.text : '#fff'} />
+                    <Text style={{ color: todayDone ? t.text : '#fff', fontSize: 14, fontWeight: '500' }}>
+                      {todayDone ? 'Goal reached' : 'Log one'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={onToggleToday}
+                style={[styles.actionBtn, {
+                  width: '100%', paddingVertical: 14,
+                  backgroundColor: todayDone ? t.surfaceMute : tint,
+                  borderWidth: todayDone ? 1 : 0, borderColor: t.border,
+                  borderRadius: 14,
+                }]}
+              >
+                <Ionicons name={todayDone ? 'checkmark' : 'radio-button-off'} size={17} color={todayDone ? t.text : '#fff'} />
+                <Text style={{ color: todayDone ? t.text : '#fff', fontSize: 15, fontWeight: '500' }}>
+                  {todayDone ? 'Done for today' : 'Mark today complete'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        {/* Stats row */}
+        <View style={{ paddingHorizontal: 14, paddingTop: 18, paddingBottom: 6 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <DetailStat t={t} label="30 days" value={Math.round(rate30 * 100)} suffix="%" />
+            <DetailStat t={t} label="90 days" value={Math.round(rate90 * 100)} suffix="%" />
+            <DetailStat t={t} label="Total"   value={totalDone} suffix="d" />
+          </View>
+        </View>
+
+        {/* 12-week heatmap */}
+        <View style={{ paddingHorizontal: 14, paddingTop: 18, paddingBottom: 4 }}>
+          <View style={cardStyle(t, { padding: 16 })}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' }}>
+                Last 12 weeks
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                {[1, 0.6, 0.3, 0].map(v => (
+                  <View key={v} style={{
+                    width: 9, height: 9, borderRadius: 2,
+                    backgroundColor: v >= 1 ? tint : v >= 0.6 ? `${tint}99` : v >= 0.3 ? `${tint}55` : t.surfaceMute,
+                  }}/>
+                ))}
+              </View>
+            </View>
+            <HabitHeatmap t={t} cols={COLS} rows={ROWS} cells={heatCells} height={110} />
+          </View>
+        </View>
+
+        {/* 30-day bar chart */}
+        <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 4 }}>
+          <View style={cardStyle(t, { padding: 16 })}>
+            <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 14 }}>
+              Last 30 days
+            </Text>
+            <BarChart t={t} data={barData30} height={84} gap={2} barRadius={2} />
+          </View>
+        </View>
+
+        {/* Reminders */}
+        <View style={{ paddingHorizontal: 22, paddingTop: 14, paddingBottom: 6 }}>
+          <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' }}>
+            Reminders
+          </Text>
+        </View>
+        <View style={{ paddingHorizontal: 14 }}>
+          <View style={cardStyle(t, { padding: 4 })}>
+            {habit.reminders.length === 0 && (
+              <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
+                <Text style={{ color: t.muted, fontSize: 13 }}>No reminders. Add one to get nudged.</Text>
+              </View>
+            )}
+            {habit.reminders.map((r, i) => (
+              <Pressable key={i} onPress={() => { setEditingReminderIdx(i); setShowTimePicker(true); }} style={{
+                paddingHorizontal: 12, paddingVertical: 12,
+                borderBottomWidth: i < habit.reminders.length - 1 ? StyleSheet.hairlineWidth : 0,
+                borderBottomColor: t.border,
+                flexDirection: 'row', alignItems: 'center', gap: 12,
+              }}>
+                <View style={{
+                  width: 32, height: 32, borderRadius: 16,
+                  backgroundColor: t.surfaceMute,
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Ionicons name="notifications-outline" size={15} color={t.muted} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ ...MONO, color: t.text, fontSize: 16, fontWeight: '600' }}>{r}</Text>
+                  <Text style={{ color: t.muted, fontSize: 11, marginTop: 2 }}>Tap to change · every day</Text>
+                </View>
+                <Pressable onPress={() => onRemoveReminder(i)} style={{ padding: 8 }} hitSlop={8}>
+                  <Ionicons name="close" size={16} color={t.subtle} />
+                </Pressable>
+              </Pressable>
+            ))}
+            <Pressable onPress={onAddReminder} style={{
+              paddingHorizontal: 14, paddingVertical: 12,
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+            }}>
+              <Ionicons name="add" size={14} color={t.accent} />
+              <Text style={{ color: t.accent, fontSize: 13, fontWeight: '500' }}>Add reminder</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <TimePickerModal
+          t={t}
+          visible={showTimePicker}
+          value={editingReminderIdx === -1 ? '08:00' : (habit.reminders[editingReminderIdx] ?? '08:00')}
+          onConfirm={onReminderConfirm}
+          onCancel={() => setShowTimePicker(false)}
+        />
+
+        {/* Streak Freeze */}
+        <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 4 }}>
+          <View style={cardStyle(t, { padding: 16, backgroundColor: t.surfaceMute })}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <View style={{
+                width: 36, height: 36, borderRadius: 18,
+                backgroundColor: '#6e6fd922',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Ionicons name="snow-outline" size={18} color="#6e6fd9" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: t.text, fontSize: 14, fontWeight: '600' }}>Streak Freeze</Text>
+                <Text style={{ color: t.muted, fontSize: 12, marginTop: 1 }}>
+                  <Text style={MONO}>{habit.freezesLeft}</Text> remaining · earn 1 every 7-day streak
+                </Text>
+              </View>
+              <Pressable
+                onPress={onUseFreeze}
+                disabled={habit.freezesLeft === 0}
+                style={{
+                  paddingHorizontal: 14, paddingVertical: 8, borderRadius: 100,
+                  backgroundColor: habit.freezesLeft > 0 ? '#6e6fd9' : t.surfaceMute,
+                  opacity: habit.freezesLeft === 0 ? 0.4 : 1,
+                }}
+              >
+                <Text style={{ color: habit.freezesLeft > 0 ? '#fff' : t.subtle, fontSize: 13, fontWeight: '500' }}>
+                  Use one
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        {/* Archive */}
+        <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 30 }}>
+          <Pressable onPress={onArchive} style={[styles.actionBtn, {
+            borderWidth: 1, borderColor: t.border, borderRadius: 14,
+            paddingVertical: 14, backgroundColor: 'transparent',
+          }]}>
+            <Ionicons name="archive-outline" size={14} color={t.danger} />
+            <Text style={{ color: t.danger, fontSize: 13, fontWeight: '500' }}>Archive habit</Text>
           </Pressable>
-        </ScrollView>
-      )}
-    </>
-  );
-}
-
-function StatCard({ label, value, t }: { label: string; value: string; t: Theme }) {
-  return (
-    <View style={[statCard.card, { backgroundColor: t.surface, borderColor: t.border }]}>
-      <Text style={[statCard.value, { color: t.text }]}>{value}</Text>
-      <Text style={[statCard.label, { color: t.muted }]}>{label}</Text>
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
-const statCard = StyleSheet.create({
-  card: {
-    flex: 1, alignItems: 'center', paddingVertical: 14,
-    borderRadius: 14, borderWidth: 1,
-  },
-  value: { fontSize: 18, fontWeight: '700' },
-  label: { fontSize: 12, marginTop: 2 },
-});
+function DetailStat({ t, label, value, suffix }: { t: any; label: string; value: number; suffix: string }) {
+  return (
+    <View style={[cardStyle(t, { padding: 14 }), { flex: 1 }]}>
+      <Text style={{ ...MONO, color: t.muted, fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' }}>{label}</Text>
+      <Text style={{ ...MONO, color: t.text, fontSize: 20, fontWeight: '600', marginTop: 6, letterSpacing: -0.4 }}>
+        {value}<Text style={{ color: t.muted, fontSize: 11, fontWeight: '400' }}>{suffix}</Text>
+      </Text>
+    </View>
+  );
+}
 
-const styles = (t: Theme) => StyleSheet.create({
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: { padding: 24, gap: 16 },
-  habitName: { color: t.text, fontSize: 28, fontWeight: '700' },
-  statsRow: { flexDirection: 'row', gap: 10 },
-  sectionLabel: {
-    color: t.muted, fontSize: 13, fontWeight: '600',
-    textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 8,
+const styles = StyleSheet.create({
+  topBar: {
+    paddingHorizontal: 14, paddingBottom: 4,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  chartCard: {
-    backgroundColor: t.surface, borderRadius: 16, padding: 16,
-    borderWidth: 1, borderColor: t.border,
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 11, borderRadius: 12,
   },
-  archiveBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginTop: 8, padding: 16, borderRadius: 14,
-    backgroundColor: t.surface, borderWidth: 1, borderColor: '#EF4444',
-  },
-  archiveBtnText: { color: '#EF4444', fontSize: 15, fontWeight: '600' },
-  headerBtn: { color: t.primary, fontWeight: '600', fontSize: 16 },
-  editContainer: { padding: 24, gap: 8 },
-  label: {
-    color: t.muted, fontSize: 13, fontWeight: '600',
-    textTransform: 'uppercase', letterSpacing: 0.8,
-  },
-  input: {
-    backgroundColor: t.surface, color: t.text, borderRadius: 12,
-    paddingHorizontal: 16, paddingVertical: 14, fontSize: 16,
-    borderWidth: 1, borderColor: t.border,
-  },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  chipText: { color: t.text, fontSize: 14 },
 });

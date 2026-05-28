@@ -1,24 +1,30 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { getDB } from '@/db/client';
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+function InnerLayout() {
+  const { t } = useTheme();
+  return (
+    <>
+      <StatusBar style={t.isDark ? 'light' : 'dark'} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="habits/new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="habits/[id]" options={{ presentation: 'card' }} />
+        <Stack.Screen name="onboarding" options={{ presentation: 'modal' }} />
+      </Stack>
+    </>
+  );
+}
 
-  useEffect(() => {
-    getDB();
-  }, []);
+export default function RootLayout() {
+  useEffect(() => { getDB(); }, []);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="habits/new" options={{ title: 'New Habit', presentation: 'modal' }} />
-        <Stack.Screen name="habits/[id]" options={{ title: 'Habit Detail' }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
-      </Stack>
+    <ThemeProvider>
+      <InnerLayout />
     </ThemeProvider>
   );
 }
