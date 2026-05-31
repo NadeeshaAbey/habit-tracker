@@ -4,16 +4,20 @@ import {
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { format } from 'date-fns';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 import { useTheme } from '@/context/ThemeContext';
 import {
-  ScreenHeader, Section, SettingsRow, Toggle, Segmented, MONO, TimePickerModal,
+  ScreenHeader, Section, SettingsRow, Toggle, Segmented, MONO, TimePickerModal, Toast,
 } from '@/components/ui';
 import { ACCENT_OPTIONS, type AccentName } from '@/theme/design';
-import { listActiveHabits } from '@/db/repositories/habits';
+import { listActiveHabits, getLogsForRange } from '@/db/repositories/habits';
 import { listCategories } from '@/db/repositories/categories';
 import { getSetting, setSetting } from '@/db/repositories/settings';
+import { resetDatabase } from '@/db/client';
 import { requestNotificationPermissions, scheduleReminder, cancelReminder } from '@/utils/notifications';
 import type { Habit, Category } from '@/types';
 
@@ -26,6 +30,12 @@ export default function SettingsScreen() {
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderTime, setReminderTime] = useState('09:00');
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2400);
+  };
 
   const load = useCallback(async () => {
     const [h, cats, enabled, time] = await Promise.all([
@@ -68,6 +78,47 @@ export default function SettingsScreen() {
     if (reminderEnabled) {
       const [h, m] = time.split(':').map(Number);
       await scheduleReminder(h, m);
+    }
+  };
+
+  const onExportData = async () => {
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const allLogs = await getLogsForRange('2000-01-01', today);
+      const payload = JSON.stringify({ habits, logs: allLogs }, null, 2);
+      const kb = (payload.length / 1024).toFixed(1);
+      const path = (FileSystem.cacheDirectory ?? '') + 'habits-export.json';
+      await FileSystem.writeAsStringAsync(path, payload, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(path, { mimeType: 'application/json' });
+      showToast(`Exported · ${allLogs.length} logs · ${kb} KB`);
+    } catch {
+      Alert.alert('Export failed', 'Could not export data.');
+    }
+  };
+
+  const onResetData = () => {
+    Alert.alert(
+      'Reset all data?',
+      'This will permanently delete all habits, logs, and settings. Cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset', style: 'destructive', onPress: async () => {
+            await resetDatabase();
+            await load();
+            showToast('All data cleared');
+          },
+        },
+      ]
+    );
+  };
+
+  const onPerHabitReminders = () => {
+    const first = habits.find(h => h.reminders.length > 0);
+    if (first) {
+      router.push(`/habits/${first.id}` as any);
+    } else {
+      Alert.alert('No reminders set', 'Open a habit\'s detail screen to add a reminder.');
     }
   };
 
@@ -163,7 +214,7 @@ export default function SettingsScreen() {
             hint={`${habitsWithReminders} active`}
             chevron
             last
-            onPress={() => Alert.alert('Per-habit reminders', 'Set reminders in each habit\'s detail screen.')}
+            onPress={onPerHabitReminders}
           />
         </Section>
 
@@ -194,7 +245,7 @@ export default function SettingsScreen() {
             </Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {freezeSummary.map(h => (
-                <View key={h.id} style={{
+                <Pressable key={h.id} onPress={() => router.push(`/habits/${h.id}` as any)} style={{
                   flex: 1, padding: 10, borderRadius: 12, backgroundColor: t.surfaceMute,
                 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
@@ -208,7 +259,7 @@ export default function SettingsScreen() {
                   }} numberOfLines={1}>
                     {h.name}
                   </Text>
-                </View>
+                </Pressable>
               ))}
             </View>
           </View>
@@ -227,6 +278,7 @@ export default function SettingsScreen() {
             label="Export data"
             hint="JSON"
             chevron
+            onPress={onExportData}
           />
           <SettingsRow
             t={t}
@@ -234,6 +286,7 @@ export default function SettingsScreen() {
             hint="Cannot be undone"
             danger
             last
+            onPress={onResetData}
           />
         </Section>
 
@@ -251,6 +304,8 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </ScrollView>
+
+      <Toast t={t} message={toast} />
     </View>
   );
 }

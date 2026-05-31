@@ -30,6 +30,7 @@ export default function TodayScreen() {
   const [logs, setLogs] = useState<Map<string, HabitLog>>(new Map());
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedKey, setSelectedKey] = useState(todayStr);
 
   const load = useCallback(async () => {
     const today = todayStr();
@@ -49,13 +50,15 @@ export default function TodayScreen() {
 
   const today = new Date();
   const todayKey = todayStr();
+  const isToday = selectedKey === todayKey;
+  const isFuture = selectedKey > todayKey;
 
   const done = useMemo(
     () => habits.filter(h => {
-      const log = logs.get(`${h.id}|${todayKey}`);
+      const log = logs.get(`${h.id}|${selectedKey}`);
       return log && (log.frozen || log.count >= h.targetPerDay);
     }).length,
-    [habits, logs, todayKey]
+    [habits, logs, selectedKey]
   );
   const total = habits.length;
   const pct = total ? done / total : 0;
@@ -82,44 +85,45 @@ export default function TodayScreen() {
   }, [habits]);
 
   const onToggle = useCallback(async (habit: Habit) => {
+    if (isFuture) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const key = `${habit.id}|${todayKey}`;
+    const key = `${habit.id}|${selectedKey}`;
     const cur = logs.get(key)?.count ?? 0;
     if (habit.targetPerDay === 1) {
       const next = cur >= 1 ? 0 : 1;
-      await setLogCount(habit.id, todayKey, next);
+      await setLogCount(habit.id, selectedKey, next);
       setLogs(prev => {
         const m = new Map(prev);
         if (next === 0) m.delete(key);
-        else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: 1, frozen: false, createdAt: Date.now() });
+        else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: 1, frozen: false, createdAt: Date.now() });
         return m;
       });
     } else {
-      const newCount = await incrementLog(habit.id, todayKey, habit.targetPerDay);
+      const newCount = await incrementLog(habit.id, selectedKey, habit.targetPerDay);
       setLogs(prev => {
         const m = new Map(prev);
         if (newCount === 0) m.delete(key);
-        else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: newCount, frozen: false, createdAt: Date.now() });
+        else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: newCount, frozen: false, createdAt: Date.now() });
         return m;
       });
     }
-  }, [logs, todayKey]);
+  }, [logs, selectedKey, isFuture]);
 
   const onIncrement = useCallback(async (habit: Habit, delta: number) => {
-    const key = `${habit.id}|${todayKey}`;
+    if (isFuture) return;
+    const key = `${habit.id}|${selectedKey}`;
     const cur = logs.get(key)?.count ?? 0;
-    let next = Math.max(0, Math.min(cur + delta, habit.targetPerDay * 2));
-    await setLogCount(habit.id, todayKey, next);
+    const next = Math.max(0, Math.min(cur + delta, habit.targetPerDay * 2));
+    await setLogCount(habit.id, selectedKey, next);
     setLogs(prev => {
       const m = new Map(prev);
       if (next === 0) m.delete(key);
-      else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: next, frozen: false, createdAt: Date.now() });
+      else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: next, frozen: false, createdAt: Date.now() });
       return m;
     });
-  }, [logs, todayKey]);
+  }, [logs, selectedKey, isFuture]);
 
   const getCatColor = (habit: Habit) => {
-    // Use category color from DB first, fallback to design CATS
     const dbCat = categories.find(c => c.id === habit.categoryId);
     if (dbCat) return dbCat.color;
     return t.accent;
@@ -145,9 +149,16 @@ export default function TodayScreen() {
           eyebrow={format(today, 'EEEE, MMM d')}
           title="Today"
           right={
-            <IconBtn t={t} onPress={() => router.push('/settings' as any)}>
-              <Ionicons name="settings-outline" size={20} color={t.text} />
-            </IconBtn>
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+              {!isToday && (
+                <IconBtn t={t} onPress={() => setSelectedKey(todayKey)} active>
+                  <Ionicons name="today-outline" size={18} color={t.accent} />
+                </IconBtn>
+              )}
+              <IconBtn t={t} onPress={() => router.push('/settings' as any)}>
+                <Ionicons name="settings-outline" size={20} color={t.text} />
+              </IconBtn>
+            </View>
           }
         />
 
@@ -157,10 +168,13 @@ export default function TodayScreen() {
             <ProgressRing t={t} pct={pct} done={done} total={total} size={68} stroke={5} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={{ ...MONO, color: t.muted, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' }}>
-                Daily progress
+                {isToday ? 'Daily progress' : format(new Date(selectedKey + 'T00:00:00'), 'EEE, MMM d')}
               </Text>
               <Text style={{ color: t.text, fontSize: 22, fontWeight: '600', marginTop: 4, letterSpacing: -0.3 }}>
-                {done === total && total > 0 ? 'All done.' : `${total - done} habit${total - done === 1 ? '' : 's'} left`}
+                {isToday
+                  ? (done === total && total > 0 ? 'All done.' : `${total - done} habit${total - done === 1 ? '' : 's'} left`)
+                  : `${done}/${total} logged`
+                }
               </Text>
               <View style={{ marginTop: 10 }}>
                 <View style={{
@@ -179,7 +193,10 @@ export default function TodayScreen() {
         </View>
 
         {/* Week strip */}
-        <WeekStrip t={t} habits={habits} logs={logs} today={today} />
+        <WeekStrip
+          t={t} habits={habits} logs={logs} today={today}
+          selectedKey={selectedKey} onSelectDay={setSelectedKey}
+        />
 
         {/* Habit groups */}
         <View style={{ paddingTop: 6 }}>
@@ -188,7 +205,7 @@ export default function TodayScreen() {
           )}
           {byPeriod.map(group => {
             const groupDone = group.items.filter(h => {
-              const log = logs.get(`${h.id}|${todayKey}`);
+              const log = logs.get(`${h.id}|${selectedKey}`);
               return log && (log.count >= h.targetPerDay || log.frozen);
             }).length;
             return (
@@ -213,8 +230,9 @@ export default function TodayScreen() {
                       t={t}
                       habit={h}
                       logs={logs}
-                      today={todayKey}
+                      dateKey={selectedKey}
                       catColor={getCatColor(h)}
+                      readOnly={isFuture}
                       onToggle={() => onToggle(h)}
                       onIncrement={(d) => onIncrement(h, d)}
                       onOpen={() => router.push(`/habits/${h.id}` as any)}
@@ -251,9 +269,10 @@ export default function TodayScreen() {
 }
 
 function WeekStrip({
-  t, habits, logs, today,
+  t, habits, logs, today, selectedKey, onSelectDay,
 }: {
   t: any; habits: Habit[]; logs: Map<string, HabitLog>; today: Date;
+  selectedKey: string; onSelectDay: (k: string) => void;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => subDays(today, 6 - i));
   const todayKey = format(today, 'yyyy-MM-dd');
@@ -270,13 +289,18 @@ function WeekStrip({
             const total = habits.length;
             const pct = total ? done / total : 0;
             const isToday = k === todayKey;
-            const bg = pct >= 1 ? t.accent : pct > 0 ? `${t.accent}33` : t.surfaceMute;
+            const isSelected = k === selectedKey;
+            const bg = isSelected
+              ? t.accent
+              : pct >= 1 ? t.accent
+              : pct > 0 ? `${t.accent}33`
+              : t.surfaceMute;
             return (
-              <View key={k} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+              <Pressable key={k} onPress={() => onSelectDay(k)} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
                 <Text style={{
                   ...MONO, fontSize: 10, letterSpacing: 0.5,
-                  color: isToday ? t.accent : t.muted,
-                  fontWeight: isToday ? '600' : '400',
+                  color: isSelected ? t.accent : isToday ? t.accent : t.muted,
+                  fontWeight: isSelected || isToday ? '600' : '400',
                 }}>
                   {format(d, 'EEEEE')}
                 </Text>
@@ -287,15 +311,23 @@ function WeekStrip({
                   borderWidth: isToday ? 2 : 0,
                   borderColor: t.accent,
                 }}>
-                  {pct >= 1 ? (
+                  {(isSelected || pct >= 1) && !isToday ? (
+                    isSelected && pct < 1 ? (
+                      <Text style={{ ...MONO, fontSize: 12, color: t.onAccent, fontWeight: '500' }}>
+                        {d.getDate()}
+                      </Text>
+                    ) : (
+                      <Ionicons name="checkmark" size={16} color={t.onAccent} />
+                    )
+                  ) : pct >= 1 ? (
                     <Ionicons name="checkmark" size={16} color={t.onAccent} />
                   ) : (
-                    <Text style={{ ...MONO, fontSize: 12, color: pct > 0 ? t.text : t.subtle, fontWeight: '500' }}>
+                    <Text style={{ ...MONO, fontSize: 12, color: isSelected ? t.onAccent : pct > 0 ? t.text : t.subtle, fontWeight: '500' }}>
                       {d.getDate()}
                     </Text>
                   )}
                 </View>
-              </View>
+              </Pressable>
             );
           })}
         </View>
@@ -305,12 +337,12 @@ function WeekStrip({
 }
 
 function HabitRow({
-  t, habit, logs, today, catColor, onToggle, onIncrement, onOpen,
+  t, habit, logs, dateKey, catColor, readOnly, onToggle, onIncrement, onOpen,
 }: {
-  t: any; habit: Habit; logs: Map<string, HabitLog>; today: string;
-  catColor: string; onToggle: () => void; onIncrement: (d: number) => void; onOpen: () => void;
+  t: any; habit: Habit; logs: Map<string, HabitLog>; dateKey: string;
+  catColor: string; readOnly: boolean; onToggle: () => void; onIncrement: (d: number) => void; onOpen: () => void;
 }) {
-  const log = logs.get(`${habit.id}|${today}`);
+  const log = logs.get(`${habit.id}|${dateKey}`);
   const count = log?.count ?? 0;
   const isMulti = habit.targetPerDay > 1;
   const isDone = count >= habit.targetPerDay;
@@ -329,7 +361,7 @@ function HabitRow({
           paddingVertical: 14, paddingHorizontal: 14,
           flexDirection: 'row', alignItems: 'center', gap: 12,
         }),
-        { opacity: isDone ? 0.7 : 1 },
+        { opacity: isDone ? 0.7 : readOnly ? 0.5 : 1 },
       ]}
     >
       <GlyphTile t={t} glyph={habit.glyph} color={catColor} size={42} />
@@ -369,6 +401,7 @@ function HabitRow({
           {count > 0 && (
             <Pressable
               onPress={() => onIncrement(-1)}
+              disabled={readOnly}
               style={{
                 width: 32, height: 32, borderRadius: 10,
                 backgroundColor: t.surfaceMute,
@@ -380,6 +413,7 @@ function HabitRow({
           )}
           <Pressable
             onPress={() => onIncrement(1)}
+            disabled={readOnly}
             style={{
               minWidth: 44, height: 32, paddingHorizontal: 10, borderRadius: 10,
               backgroundColor: isDone ? t.accent : `${catColor}22`,
@@ -399,6 +433,7 @@ function HabitRow({
       ) : (
         <Pressable
           onPress={onToggle}
+          disabled={readOnly}
           style={{
             width: 32, height: 32, borderRadius: 16,
             backgroundColor: isDone ? t.accent : 'transparent',

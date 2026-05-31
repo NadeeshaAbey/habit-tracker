@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/context/ThemeContext';
 import {
   cardStyle, GlyphTile, HabitHeatmap, BarChart, PeriodIcon, IconBtn, MONO,
-  TimePickerModal,
+  TimePickerModal, Toast,
 } from '@/components/ui';
 import {
   getHabitById, getLogsForHabit, setLogCount,
@@ -32,9 +32,16 @@ export default function HabitDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [editingReminderIdx, setEditingReminderIdx] = useState<number>(-1);
+  const [freezeDay, setFreezeDay] = useState(() => format(subDays(new Date(), 1), 'yyyy-MM-dd'));
+  const [toast, setToast] = useState<string | null>(null);
 
   const today = new Date();
   const todayKey = format(today, 'yyyy-MM-dd');
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2400);
+  };
 
   const load = useCallback(async () => {
     const since = format(subDays(today, 119), 'yyyy-MM-dd');
@@ -106,15 +113,16 @@ export default function HabitDetailScreen() {
 
   const onUseFreeze = async () => {
     if (habit.freezesLeft === 0) return;
-    const yesterday = format(subDays(today, 1), 'yyyy-MM-dd');
-    await freezeLog(habit.id, yesterday);
-    setHabit(prev => prev ? { ...prev, freezesLeft: prev.freezesLeft - 1 } : prev);
-    const key = `${habit.id}|${yesterday}`;
+    await freezeLog(habit.id, freezeDay);
+    const newFreezesLeft = habit.freezesLeft - 1;
+    setHabit(prev => prev ? { ...prev, freezesLeft: newFreezesLeft } : prev);
+    const key = `${habit.id}|${freezeDay}`;
     setLogs(prev => {
       const m = new Map(prev);
-      m.set(key, { id: 0, habitId: habit.id, date: yesterday, count: 0, frozen: true, createdAt: Date.now() });
+      m.set(key, { id: 0, habitId: habit.id, date: freezeDay, count: 0, frozen: true, createdAt: Date.now() });
       return m;
     });
+    showToast(`Day frozen · ${newFreezesLeft} freeze${newFreezesLeft === 1 ? '' : 's'} left`);
   };
 
   const onAddReminder = () => {
@@ -153,6 +161,28 @@ export default function HabitDetailScreen() {
     );
   };
 
+  const onDotMenu = () => {
+    Alert.alert('Options', undefined, [
+      { text: todayDone ? 'Unmark today' : 'Mark today', onPress: onToggleToday },
+      { text: 'Edit habit', onPress: () => router.push(`/habits/new?editId=${habit.id}` as any) },
+      { text: 'Archive', style: 'destructive', onPress: onArchive },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  // 14-day freeze picker days (13 days ago → today)
+  const freezeDays = Array.from({ length: 14 }, (_, i) => {
+    const d = subDays(today, 13 - i);
+    const key = format(d, 'yyyy-MM-dd');
+    const log = logs.get(`${habit.id}|${key}`);
+    const disabled = !!(log && (log.count >= habit.targetPerDay || log.frozen));
+    return {
+      key,
+      label: key === todayKey ? 'Today' : format(d, 'MMM d'),
+      disabled,
+    };
+  });
+
   // Build heatmap cells
   const COLS = 13, ROWS = 7;
   const gridBase = subDays(today, 83);
@@ -190,6 +220,9 @@ export default function HabitDetailScreen() {
         <View style={{ flexDirection: 'row', gap: 4 }}>
           <IconBtn t={t} onPress={() => router.push(`/habits/new?editId=${habit.id}` as any)}>
             <Ionicons name="pencil-outline" size={18} color={t.text} />
+          </IconBtn>
+          <IconBtn t={t} onPress={onDotMenu}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={t.text} />
           </IconBtn>
         </View>
       </View>
@@ -422,7 +455,7 @@ export default function HabitDetailScreen() {
         {/* Streak Freeze */}
         <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 4 }}>
           <View style={cardStyle(t, { padding: 16, backgroundColor: t.surfaceMute })}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <View style={{
                 width: 36, height: 36, borderRadius: 18,
                 backgroundColor: '#6e6fd922',
@@ -436,20 +469,58 @@ export default function HabitDetailScreen() {
                   <Text style={MONO}>{habit.freezesLeft}</Text> remaining · earn 1 every 7-day streak
                 </Text>
               </View>
-              <Pressable
-                onPress={onUseFreeze}
-                disabled={habit.freezesLeft === 0}
-                style={{
-                  paddingHorizontal: 14, paddingVertical: 8, borderRadius: 100,
-                  backgroundColor: habit.freezesLeft > 0 ? '#6e6fd9' : t.surfaceMute,
-                  opacity: habit.freezesLeft === 0 ? 0.4 : 1,
-                }}
-              >
-                <Text style={{ color: habit.freezesLeft > 0 ? '#fff' : t.subtle, fontSize: 13, fontWeight: '500' }}>
-                  Use one
-                </Text>
-              </Pressable>
             </View>
+
+            {/* 14-day day picker */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 12 }}
+              contentContainerStyle={{ gap: 6, paddingVertical: 2, paddingHorizontal: 2 }}
+            >
+              {freezeDays.map(({ key, label, disabled }) => {
+                const isSelected = freezeDay === key;
+                return (
+                  <Pressable
+                    key={key}
+                    onPress={() => { if (!disabled) setFreezeDay(key); }}
+                    style={{
+                      paddingHorizontal: 12, paddingVertical: 7, borderRadius: 100,
+                      backgroundColor: isSelected ? '#6e6fd9' : t.surfaceAlt,
+                      opacity: disabled ? 0.38 : 1,
+                    }}
+                  >
+                    <Text style={{
+                      ...MONO, fontSize: 12, fontWeight: '500',
+                      color: isSelected ? '#fff' : disabled ? t.subtle : t.text,
+                    }}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Confirm */}
+            <Pressable
+              onPress={onUseFreeze}
+              disabled={habit.freezesLeft === 0}
+              style={{
+                paddingVertical: 10, borderRadius: 100, alignItems: 'center',
+                backgroundColor: habit.freezesLeft > 0 ? '#6e6fd9' : t.surfaceAlt,
+                opacity: habit.freezesLeft === 0 ? 0.45 : 1,
+              }}
+            >
+              <Text style={{
+                fontSize: 13, fontWeight: '600',
+                color: habit.freezesLeft > 0 ? '#fff' : t.subtle,
+              }}>
+                {habit.freezesLeft > 0
+                  ? `Freeze ${format(new Date(freezeDay + 'T00:00:00'), 'MMM d')}`
+                  : 'No freezes left'
+                }
+              </Text>
+            </Pressable>
           </View>
         </View>
 
@@ -464,6 +535,8 @@ export default function HabitDetailScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      <Toast t={t} message={toast} />
     </View>
   );
 }

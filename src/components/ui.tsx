@@ -403,6 +403,25 @@ export function TimePickerModal({
   );
 }
 
+// ── Toast ─────────────────────────────────────────────────────
+export function Toast({ t, message }: { t: AppTheme; message: string | null }) {
+  if (!message) return null;
+  return (
+    <View style={{
+      position: 'absolute', bottom: 20, left: 24, right: 24, zIndex: 100,
+      backgroundColor: t.isDark ? '#fff' : '#111',
+      paddingHorizontal: 18, paddingVertical: 12, borderRadius: 100,
+      alignItems: 'center',
+      shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
+      elevation: 8,
+    }}>
+      <Text style={{ color: t.isDark ? '#111' : '#fff', fontSize: 13, fontWeight: '500', textAlign: 'center' }}>
+        {message}
+      </Text>
+    </View>
+  );
+}
+
 // ── Settings row ─────────────────────────────────────────────
 export function SettingsRow({
   t, label, hint, right, chevron, last, danger, onPress,

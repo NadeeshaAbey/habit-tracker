@@ -80,3 +80,26 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
 
   return _db;
 }
+
+export async function resetDatabase(): Promise<void> {
+  const db = await getDB();
+  await db.execAsync(`
+    DELETE FROM habit_logs;
+    DELETE FROM habits;
+    DELETE FROM settings;
+    DELETE FROM categories;
+  `);
+  const seedCats: [string, string][] = [
+    ['Health',   '#5fae7c'],
+    ['Mind',     '#6e6fd9'],
+    ['Learning', '#d6a437'],
+    ['Work',     '#5a6473'],
+    ['Creative', '#e88a6b'],
+  ];
+  for (const [name, color] of seedCats) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO categories (name, color, created_at) VALUES (?, ?, ?)`,
+      [name, color, Date.now()]
+    );
+  }
+}
