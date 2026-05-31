@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '@/context/ThemeContext';
 import {
-  cardStyle, GlyphTile, ProgressRing, PeriodIcon, ScreenHeader, IconBtn, MONO,
+  cardStyle, GlyphTile, ProgressRing, PeriodIcon, ScreenHeader, IconBtn, MONO, Toast,
 } from '@/components/ui';
 import {
   listActiveHabits, getLogsForRange, setLogCount, incrementLog,
@@ -31,6 +31,12 @@ export default function TodayScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedKey, setSelectedKey] = useState(todayStr);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2400);
+  };
 
   const load = useCallback(async () => {
     const today = todayStr();
@@ -89,23 +95,27 @@ export default function TodayScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const key = `${habit.id}|${selectedKey}`;
     const cur = logs.get(key)?.count ?? 0;
-    if (habit.targetPerDay === 1) {
-      const next = cur >= 1 ? 0 : 1;
-      await setLogCount(habit.id, selectedKey, next);
-      setLogs(prev => {
-        const m = new Map(prev);
-        if (next === 0) m.delete(key);
-        else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: 1, frozen: false, createdAt: Date.now() });
-        return m;
-      });
-    } else {
-      const newCount = await incrementLog(habit.id, selectedKey, habit.targetPerDay);
-      setLogs(prev => {
-        const m = new Map(prev);
-        if (newCount === 0) m.delete(key);
-        else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: newCount, frozen: false, createdAt: Date.now() });
-        return m;
-      });
+    try {
+      if (habit.targetPerDay === 1) {
+        const next = cur >= 1 ? 0 : 1;
+        await setLogCount(habit.id, selectedKey, next);
+        setLogs(prev => {
+          const m = new Map(prev);
+          if (next === 0) m.delete(key);
+          else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: 1, frozen: false, createdAt: Date.now() });
+          return m;
+        });
+      } else {
+        const newCount = await incrementLog(habit.id, selectedKey, habit.targetPerDay);
+        setLogs(prev => {
+          const m = new Map(prev);
+          if (newCount === 0) m.delete(key);
+          else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: newCount, frozen: false, createdAt: Date.now() });
+          return m;
+        });
+      }
+    } catch {
+      showToast('Could not save');
     }
   }, [logs, selectedKey, isFuture]);
 
@@ -114,13 +124,17 @@ export default function TodayScreen() {
     const key = `${habit.id}|${selectedKey}`;
     const cur = logs.get(key)?.count ?? 0;
     const next = Math.max(0, Math.min(cur + delta, habit.targetPerDay * 2));
-    await setLogCount(habit.id, selectedKey, next);
-    setLogs(prev => {
-      const m = new Map(prev);
-      if (next === 0) m.delete(key);
-      else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: next, frozen: false, createdAt: Date.now() });
-      return m;
-    });
+    try {
+      await setLogCount(habit.id, selectedKey, next);
+      setLogs(prev => {
+        const m = new Map(prev);
+        if (next === 0) m.delete(key);
+        else m.set(key, { id: 0, habitId: habit.id, date: selectedKey, count: next, frozen: false, createdAt: Date.now() });
+        return m;
+      });
+    } catch {
+      showToast('Could not save');
+    }
   }, [logs, selectedKey, isFuture]);
 
   const getCatColor = (habit: Habit) => {
@@ -264,6 +278,8 @@ export default function TodayScreen() {
       >
         <Ionicons name="add" size={28} color={t.bg} />
       </Pressable>
+
+      <Toast t={t} message={toast} />
     </View>
   );
 }
@@ -296,7 +312,14 @@ function WeekStrip({
               : pct > 0 ? `${t.accent}33`
               : t.surfaceMute;
             return (
-              <Pressable key={k} onPress={() => onSelectDay(k)} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+              <Pressable
+                key={k}
+                onPress={() => onSelectDay(k)}
+                accessibilityRole="button"
+                accessibilityLabel={`View ${format(d, 'EEEE, MMMM d')}`}
+                accessibilityState={{ selected: isSelected }}
+                style={{ flex: 1, alignItems: 'center', gap: 6 }}
+              >
                 <Text style={{
                   ...MONO, fontSize: 10, letterSpacing: 0.5,
                   color: isSelected ? t.accent : isToday ? t.accent : t.muted,
@@ -402,6 +425,8 @@ function HabitRow({
             <Pressable
               onPress={() => onIncrement(-1)}
               disabled={readOnly}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove one ${habit.name}`}
               style={{
                 width: 32, height: 32, borderRadius: 10,
                 backgroundColor: t.surfaceMute,
@@ -414,6 +439,8 @@ function HabitRow({
           <Pressable
             onPress={() => onIncrement(1)}
             disabled={readOnly}
+            accessibilityRole="button"
+            accessibilityLabel={isDone ? `${habit.name} goal reached` : `Log ${habit.name}`}
             style={{
               minWidth: 44, height: 32, paddingHorizontal: 10, borderRadius: 10,
               backgroundColor: isDone ? t.accent : `${catColor}22`,
@@ -434,6 +461,9 @@ function HabitRow({
         <Pressable
           onPress={onToggle}
           disabled={readOnly}
+          accessibilityRole="checkbox"
+          accessibilityLabel={isDone ? `Unmark ${habit.name}` : `Mark ${habit.name} complete`}
+          accessibilityState={{ checked: isDone }}
           style={{
             width: 32, height: 32, borderRadius: 16,
             backgroundColor: isDone ? t.accent : 'transparent',

@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, Pressable, Alert,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import { Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,7 @@ import { listActiveHabits, getLogsForRange } from '@/db/repositories/habits';
 import { listCategories } from '@/db/repositories/categories';
 import { getSetting, setSetting } from '@/db/repositories/settings';
 import { resetDatabase } from '@/db/client';
+import { pickAndImport } from '@/db/import';
 import { requestNotificationPermissions, scheduleReminder, cancelReminder } from '@/utils/notifications';
 import type { Habit, Category } from '@/types';
 
@@ -111,6 +113,18 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const onImportData = async () => {
+    try {
+      const { habitCount, logCount } = await pickAndImport();
+      await load();
+      showToast(`Imported · ${habitCount} habits · ${logCount} logs`);
+    } catch (err: any) {
+      if (err?.message !== 'CANCELLED') {
+        Alert.alert('Import failed', err?.message ?? 'Could not read file.');
+      }
+    }
   };
 
   const onPerHabitReminders = () => {
@@ -275,10 +289,23 @@ export default function SettingsScreen() {
           />
           <SettingsRow
             t={t}
+            label="Privacy policy"
+            chevron
+            onPress={() => Linking.openURL('https://github.com/NadeeshaAbey/habit-tracker/blob/main/PRIVACY.md')}
+          />
+          <SettingsRow
+            t={t}
             label="Export data"
             hint="JSON"
             chevron
             onPress={onExportData}
+          />
+          <SettingsRow
+            t={t}
+            label="Import data"
+            hint="JSON"
+            chevron
+            onPress={onImportData}
           />
           <SettingsRow
             t={t}

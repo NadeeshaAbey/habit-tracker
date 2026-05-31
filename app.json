@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "habit-tracker",
+    "name": "Habit Tracker",
     "slug": "habit-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,12 +8,21 @@
     "scheme": "habittracker",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/icon.png"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.nadeeshaabey.habittracker",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.nadeeshaabey.habittracker",
+      "versionCode": 1,
+      "allowBackup": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundColor": "#E6F4FE"
+        "backgroundColor": "#fafaf7"
       }
     },
     "web": {
@@ -25,7 +34,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#fafaf7",
           "android": {
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
@@ -38,10 +47,19 @@
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",
-          "color": "#4F46E5",
+          "color": "#6e6fd9",
           "defaultChannel": "default"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "2256e058-e122-43e8-9668-a8e6f5c076ff"
+      }
+    },
+    "owner": "nadeeshaabey"
   }
 }

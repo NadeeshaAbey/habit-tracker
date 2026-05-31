@@ -176,13 +176,21 @@ export function PeriodIcon({ id, color, size = 16 }: { id: Period; color: string
 }
 
 // ── Toggle ───────────────────────────────────────────────────
-export function Toggle({ t, value, onChange }: { t: AppTheme; value: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({ t, value, onChange, label }: {
+  t: AppTheme; value: boolean; onChange: (v: boolean) => void; label?: string;
+}) {
   return (
-    <Pressable onPress={() => onChange(!value)} style={{
-      width: 42, height: 24, borderRadius: 12,
-      backgroundColor: value ? t.accent : t.surfaceMute,
-      justifyContent: 'center',
-    }}>
+    <Pressable
+      onPress={() => onChange(!value)}
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: value }}
+      style={{
+        width: 42, height: 24, borderRadius: 12,
+        backgroundColor: value ? t.accent : t.surfaceMute,
+        justifyContent: 'center',
+      }}
+    >
       <View style={{
         position: 'absolute',
         left: value ? 20 : 2,
@@ -263,16 +271,22 @@ export function ScreenHeader({
 
 // ── Icon button ──────────────────────────────────────────────
 export function IconBtn({
-  t, onPress, children, active, size = 38,
+  t, onPress, children, active, size = 38, label,
 }: {
-  t: AppTheme; onPress?: () => void; children: React.ReactNode; active?: boolean; size?: number;
+  t: AppTheme; onPress?: () => void; children: React.ReactNode;
+  active?: boolean; size?: number; label?: string;
 }) {
   return (
-    <Pressable onPress={onPress} style={{
-      width: size, height: size, borderRadius: size / 2,
-      backgroundColor: active ? t.accentSoft : 'transparent',
-      alignItems: 'center', justifyContent: 'center',
-    }}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={{
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: active ? t.accentSoft : 'transparent',
+        alignItems: 'center', justifyContent: 'center',
+      }}
+    >
       {children}
     </Pressable>
   );

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getDB } from '@/db/client';
 
 function InnerLayout() {
@@ -23,8 +24,10 @@ export default function RootLayout() {
   useEffect(() => { getDB(); }, []);
 
   return (
-    <ThemeProvider>
-      <InnerLayout />
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <InnerLayout />
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

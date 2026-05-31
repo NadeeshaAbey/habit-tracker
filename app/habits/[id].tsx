@@ -88,41 +88,53 @@ export default function HabitDetailScreen() {
 
   const onToggleToday = async () => {
     const next = todayDone ? 0 : 1;
-    await setLogCount(habit.id, todayKey, next);
-    setLogs(prev => {
-      const m = new Map(prev);
-      const key = `${habit.id}|${todayKey}`;
-      if (next === 0) m.delete(key);
-      else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: 1, frozen: false, createdAt: Date.now() });
-      return m;
-    });
+    try {
+      await setLogCount(habit.id, todayKey, next);
+      setLogs(prev => {
+        const m = new Map(prev);
+        const key = `${habit.id}|${todayKey}`;
+        if (next === 0) m.delete(key);
+        else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: 1, frozen: false, createdAt: Date.now() });
+        return m;
+      });
+    } catch {
+      showToast('Could not save');
+    }
   };
 
   const onIncrementToday = async (delta: number) => {
     const key = `${habit.id}|${todayKey}`;
     const cur = todayCount;
     const next = Math.max(0, Math.min(cur + delta, habit.targetPerDay * 2));
-    await setLogCount(habit.id, todayKey, next);
-    setLogs(prev => {
-      const m = new Map(prev);
-      if (next === 0) m.delete(key);
-      else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: next, frozen: false, createdAt: Date.now() });
-      return m;
-    });
+    try {
+      await setLogCount(habit.id, todayKey, next);
+      setLogs(prev => {
+        const m = new Map(prev);
+        if (next === 0) m.delete(key);
+        else m.set(key, { id: 0, habitId: habit.id, date: todayKey, count: next, frozen: false, createdAt: Date.now() });
+        return m;
+      });
+    } catch {
+      showToast('Could not save');
+    }
   };
 
   const onUseFreeze = async () => {
     if (habit.freezesLeft === 0) return;
-    await freezeLog(habit.id, freezeDay);
-    const newFreezesLeft = habit.freezesLeft - 1;
-    setHabit(prev => prev ? { ...prev, freezesLeft: newFreezesLeft } : prev);
-    const key = `${habit.id}|${freezeDay}`;
-    setLogs(prev => {
-      const m = new Map(prev);
-      m.set(key, { id: 0, habitId: habit.id, date: freezeDay, count: 0, frozen: true, createdAt: Date.now() });
-      return m;
-    });
-    showToast(`Day frozen · ${newFreezesLeft} freeze${newFreezesLeft === 1 ? '' : 's'} left`);
+    try {
+      await freezeLog(habit.id, freezeDay);
+      const newFreezesLeft = habit.freezesLeft - 1;
+      setHabit(prev => prev ? { ...prev, freezesLeft: newFreezesLeft } : prev);
+      const key = `${habit.id}|${freezeDay}`;
+      setLogs(prev => {
+        const m = new Map(prev);
+        m.set(key, { id: 0, habitId: habit.id, date: freezeDay, count: 0, frozen: true, createdAt: Date.now() });
+        return m;
+      });
+      showToast(`Day frozen · ${newFreezesLeft} freeze${newFreezesLeft === 1 ? '' : 's'} left`);
+    } catch {
+      showToast('Could not apply freeze');
+    }
   };
 
   const onAddReminder = () => {
@@ -137,14 +149,22 @@ export default function HabitDetailScreen() {
       editingReminderIdx === -1
         ? [...habit.reminders, time]
         : habit.reminders.map((r, i) => (i === editingReminderIdx ? time : r));
-    await updateHabitReminders(habit.id, newReminders);
-    setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+    try {
+      await updateHabitReminders(habit.id, newReminders);
+      setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+    } catch {
+      showToast('Could not save reminder');
+    }
   };
 
   const onRemoveReminder = async (i: number) => {
     const newReminders = habit.reminders.filter((_, j) => j !== i);
-    await updateHabitReminders(habit.id, newReminders);
-    setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+    try {
+      await updateHabitReminders(habit.id, newReminders);
+      setHabit(prev => prev ? { ...prev, reminders: newReminders } : prev);
+    } catch {
+      showToast('Could not remove reminder');
+    }
   };
 
   const onArchive = () => {
@@ -154,8 +174,12 @@ export default function HabitDetailScreen() {
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Archive', style: 'destructive', onPress: async () => {
-          await deleteHabit(habit.id);
-          router.back();
+          try {
+            await deleteHabit(habit.id);
+            router.back();
+          } catch {
+            showToast('Could not archive habit');
+          }
         }},
       ]
     );

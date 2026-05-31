@@ -1,11 +1,30 @@
 import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system';
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
-export async function getDB(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await SQLite.openDatabaseAsync('habits.db');
-  await _db.execAsync(`
+// Each entry migrates from version N → N+1.
+// The baseline (version 0 → 1) encodes all the ALTER TABLEs that were
+// previously applied ad-hoc, so existing installs skip them automatically.
+const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
+  // v0 → v1: add columns that were added via try/catch ALTER in the old client
+  async (db) => {
+    for (const sql of [
+      `ALTER TABLE habits ADD COLUMN glyph TEXT NOT NULL DEFAULT '●'`,
+      `ALTER TABLE habits ADD COLUMN period TEXT NOT NULL DEFAULT 'anytime'`,
+      `ALTER TABLE habits ADD COLUMN reminders TEXT NOT NULL DEFAULT '[]'`,
+      `ALTER TABLE habits ADD COLUMN freezes_left INTEGER NOT NULL DEFAULT 2`,
+      `ALTER TABLE habit_logs ADD COLUMN frozen INTEGER NOT NULL DEFAULT 0`,
+    ]) {
+      try { await db.execAsync(sql); } catch { /* column already exists on fresh installs */ }
+    }
+  },
+];
+
+async function openAndInit(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync('habits.db');
+
+  await db.execAsync(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
 
@@ -49,21 +68,21 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
     CREATE INDEX IF NOT EXISTS idx_logs_habit_date  ON habit_logs(habit_id, date DESC);
   `);
 
-  // Migrations: add new columns to existing tables (ignored if already present)
-  for (const sql of [
-    `ALTER TABLE habits ADD COLUMN glyph TEXT NOT NULL DEFAULT '●'`,
-    `ALTER TABLE habits ADD COLUMN period TEXT NOT NULL DEFAULT 'anytime'`,
-    `ALTER TABLE habits ADD COLUMN reminders TEXT NOT NULL DEFAULT '[]'`,
-    `ALTER TABLE habits ADD COLUMN freezes_left INTEGER NOT NULL DEFAULT 2`,
-    `ALTER TABLE habit_logs ADD COLUMN frozen INTEGER NOT NULL DEFAULT 0`,
-  ]) {
-    try { await _db.execAsync(sql); } catch { /* column already exists */ }
+  // Run pending migrations
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const currentVersion = row?.user_version ?? 0;
+
+  for (let v = currentVersion; v < MIGRATIONS.length; v++) {
+    await db.withTransactionAsync(async () => {
+      await MIGRATIONS[v](db);
+      await db.execAsync(`PRAGMA user_version = ${v + 1}`);
+    });
   }
 
-  // Seed design categories if none exist
-  const catCount = await _db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) as n FROM categories`);
+  // Seed categories if none exist
+  const catCount = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) as n FROM categories`);
   if (!catCount || catCount.n === 0) {
-    const seedCats = [
+    const seedCats: [string, string][] = [
       ['Health',   '#5fae7c'],
       ['Mind',     '#6e6fd9'],
       ['Learning', '#d6a437'],
@@ -71,14 +90,28 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
       ['Creative', '#e88a6b'],
     ];
     for (const [name, color] of seedCats) {
-      await _db.runAsync(
+      await db.runAsync(
         `INSERT OR IGNORE INTO categories (name, color, created_at) VALUES (?, ?, ?)`,
         [name, color, Date.now()]
       );
     }
   }
 
-  return _db;
+  return db;
+}
+
+export async function getDB(): Promise<SQLite.SQLiteDatabase> {
+  if (_db) return _db;
+  try {
+    _db = await openAndInit();
+    return _db;
+  } catch (err) {
+    // Corrupt DB: delete the file and retry once
+    const dbPath = `${FileSystem.documentDirectory}SQLite/habits.db`;
+    try { await FileSystem.deleteAsync(dbPath, { idempotent: true }); } catch { /* ignore */ }
+    _db = await openAndInit();
+    return _db;
+  }
 }
 
 export async function resetDatabase(): Promise<void> {
@@ -89,6 +122,8 @@ export async function resetDatabase(): Promise<void> {
     DELETE FROM settings;
     DELETE FROM categories;
   `);
+  // Reset user_version so migrations re-run on next open (seeds fresh categories)
+  await db.execAsync(`PRAGMA user_version = 0`);
   const seedCats: [string, string][] = [
     ['Health',   '#5fae7c'],
     ['Mind',     '#6e6fd9'],
